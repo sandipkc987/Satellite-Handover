@@ -179,13 +179,7 @@ minimises this path length at every moment.
 ### Strategy 2 — Longest Visual Time
 
 
-- Minimises total handover count by design  
-- Tiebreaker: highest elevation among satellites with equal remaining windows  
-- Matches the strategy in: *Romero et al., Handover Management and Doppler 
-Shift Compensation in Satellite Communications, University of North Texas*  
-- Paper finding: longest visual strategy outperforms strongest-signal when 
-handover delay exceeds **130 ms**
-
+-
 ---
 
 ## Repository Files
