@@ -2,7 +2,7 @@
 % ========================================================================
 % PURPOSE
 % ========================================================================
-% This script takes the raw visibility data from File-1 and turns it into
+% This script takes the raw visibility data from starlink_walker_constellation.m and turns it into
 % something more useful for communication analysis - a clean handover
 % sequence that tells you which satellite is actually serving Irving at
 % any given moment, and when the link switches to a different satellite.
@@ -22,7 +22,7 @@
 %                       with the same satellite into a single interval,
 %                       making it easy to read the full handover sequence
 %   Excel export      — two .xlsx files: one with the raw data sheets,
-%                       one formatted and colour-coded for easy review
+%                       one formatted for easy review
 %   MAT-file export   — saves the key variables for use in later scripts
 %
 % ========================================================================
@@ -35,7 +35,7 @@ close all;
 % 1) LOAD WORKSPACE
 % ========================================================================
 % Everything we need — the satellite objects, TLE table, scenario timing,
-% and sample rate — was saved by File-1. Load it here so we don't have to
+% and sample rate was saved on starlink_walker_constellation.m file. Load it here so we don't have to
 % rebuild the constellation from scratch.
 
 saveFolder = 'C:\Users\sandy\Downloads\Handover';
@@ -288,17 +288,6 @@ end
 %% ========================================================================
 % 9) BUILD THE SAMPLE-BY-SAMPLE HANDOVER TIMELINE
 % ========================================================================
-% Now that we know which satellite is serving at each time step, we pull
-% the corresponding metadata from the TLE table and assemble everything
-% into a single timeline table. The vectorized index read here is much
-% faster than looping over each row individually.
-%
-% Two extra columns are added beyond the raw selection data:
-%   Elevation_deg   — rounded to 4 decimal places (15-digit precision is
-%                     meaningless for an angle measurement from a simulation)
-%   HandoverFlag    — TRUE on any step where the serving satellite changed
-%                     from the previous step; makes it easy to filter just
-%                     the handover events in Excel without comparing rows manually
 
 validMask = ~isnan(bestSatIndex);
 
@@ -354,18 +343,6 @@ handoverTimeline = table( ...
 %% ========================================================================
 % 10) MERGE CONSECUTIVE SELECTIONS INTO SERVING INTERVALS
 % ========================================================================
-% The timeline table has one row per time step, but for analysis it's more
-% useful to know "satellite X served from 10:00 to 10:08, then satellite Y
-% took over" rather than reading 16 identical rows. This section collapses
-% consecutive rows with the same satellite into a single interval row.
-%
-% For each interval we also compute:
-%   Duration        — total time the satellite was serving
-%   Max/Mean elev   — elevation statistics across the interval
-%
-% Storage is pre-allocated to the maximum possible number of segments
-% (one per time step, in the pathological case of a different satellite
-% every step) and trimmed to the actual count at the end.
 
 maxSegments = numTimeSteps;
 
@@ -386,7 +363,6 @@ handoverNum  = 0;
 
 for tIdx = 2:(numTimeSteps + 1)
 
-    % A segment ends when we reach the final step or the satellite changes
     isBreak = (tIdx > numTimeSteps) || ...
               ~isequaln(bestSatIndex(tIdx), bestSatIndex(segStart));
 
@@ -407,7 +383,6 @@ for tIdx = 2:(numTimeSteps + 1)
 
         if isnan(selectedIdx)
             seg_ActiveSatellite(segCount) = "No Satellite";
-            % Remaining fields stay NaN / 0 from pre-allocation
 
         else
             seg_ActiveSatellite(segCount) = tleTable.SatelliteLabel(selectedIdx);
@@ -424,7 +399,6 @@ for tIdx = 2:(numTimeSteps + 1)
     end
 end
 
-% Trim pre-allocated arrays down to actual segment count, then build the table
 handoverTable = table( ...
     seg_HandoverNumber(1:segCount), ...
     seg_ActiveSatellite(1:segCount), ...
@@ -480,15 +454,13 @@ end
 % ========================================================================
 % Two Excel files are produced:
 %
-%   highest_elevation_handover.xlsx
+%   highest_elevation.xlsx
 %       Sheet 1 — HandoverTimeline : every time step with serving satellite
 %       Sheet 2 — HandoverTable    : merged intervals, one row per service window
 %
 %   handover_reformatted.xlsx
-%       A formatted, colour-coded version built with the Windows COM interface.
-%       Navy header, alternating row colours, handler satellites highlighted
-%       in red, frozen header rows, and auto-filter on every column.
-%       Intended for direct distribution or review.
+%       A clean summary sheet built by grouping consecutive same-satellite
+%       rows from the timeline into serving intervals.
 %
 %   highest_elevation_handover.mat
 %       Saves the two tables and key parameters for use in downstream scripts.
@@ -547,8 +519,8 @@ fprintf('MAT file saved:\n%s\n', matOut);
 %   Plane / Sat-in-Plane / Catalog  constellation identifiers
 %   Start / End Time  formatted as HH:MM:SS (time only)
 %   Duration (sec)    total time this satellite was serving
-%   Elevation Range   min and max elevation across the interval
-%   Visible Sats      min and max number of satellites in view during interval
+%   Max Elevation     peak elevation during interval
+%   Mean Elevation    average elevation during interval
 %
 % ========================================================================
 
@@ -566,17 +538,11 @@ end
 % -------------------------------------------------------------------------
 
 function buildFormattedExcel(handoverTimeline, handoverTable, sampleTime, outFile)
-% BUILDFORMATTEDEXCEL  Write a styled, colour-coded Excel handover report.
+% BUILDFORMATTEDEXCEL  Write a clean Excel handover report.
 %
-% This function takes the per-sample timeline and the merged interval table,
-% groups consecutive rows with the same satellite, and writes a single
-% formatted sheet with one row per serving interval. It uses the Windows
-% COM interface to apply colours and borders directly — no Python or
-% third-party toolbox is needed.
-%
-% The report uses a navy header row, alternating fill colours for data rows,
-% and red rows with white text for any interval where the handler satellite
-% was serving. Header rows are frozen and auto-filter is enabled on all columns.
+% Groups consecutive same-satellite rows from the timeline into serving
+% intervals and writes a single summary sheet using writetable.
+% Matches the simple export style used in the LVT script.
 %
 % Inputs:
 %   handoverTimeline  — per-sample table from Section 9
@@ -584,228 +550,52 @@ function buildFormattedExcel(handoverTimeline, handoverTable, sampleTime, outFil
 %   sampleTime        — scenario sample interval in seconds
 %   outFile           — full output path for the .xlsx file
 
-    % Colour constants — Excel COM uses BGR-packed integers
-    % (value = R + G*256 + B*65536)
-    COL_HDR_BG    = rgb2xl(31,  78, 121);   % navy   #1F4E79
-    COL_HDR_FG    = rgb2xl(255,255,255);    % white
-    COL_HANDLER   = rgb2xl(192,  0,   0);   % red    #C00000
-    COL_HAND_FG   = rgb2xl(255,255,255);    % white
-    COL_BLACK     = rgb2xl(  0,  0,   0);
-    COL_WHITE     = rgb2xl(255,255,255);
+    nRows   = height(handoverTimeline);
+    satIdx  = handoverTimeline.BestSatelliteIndex;
+    timeVec = handoverTimeline.Time;
+    elevVec = handoverTimeline.Elevation_deg;
+    visVec  = handoverTimeline.NumVisibleSatellites;
 
-    % Cycle through these fill colours for non-handler data rows
-    ALT_FILLS = [ ...
-        rgb2xl(255,255,255); ...   % white
-        rgb2xl(220,230,241); ...   % light blue
-        rgb2xl(226,239,218); ...   % light green
-        rgb2xl(255,242,204); ...   % light yellow
-        rgb2xl(252,228,214); ...   % light orange
-        rgb2xl(232,213,240); ...   % light purple
-        rgb2xl(217,234,211); ];    % mint green
+    out_Num = {}; out_Active = {}; out_Plane = {}; out_SIP = {};
+    out_Catalog = {}; out_Start = {}; out_End = {}; out_Duration = {};
+    out_MaxElev = {}; out_MeanElev = {};
 
-    % ── Group the timeline into consecutive same-satellite intervals ───────
-    nRows    = height(handoverTimeline);
-    satIdx   = handoverTimeline.BestSatelliteIndex;
-    timeVec  = handoverTimeline.Time;
-    elevVec  = handoverTimeline.Elevation_deg;
-    visVec   = handoverTimeline.NumVisibleSatellites;
-
-    groups = struct( ...
-        'active',    {}, 'plane',   {}, 'sip',     {}, ...
-        'catalog',   {}, 'handler', {}, ...
-        'startTime', {}, 'endTime', {}, 'durSec',  {}, ...
-        'minEl',     {}, 'maxEl',   {}, ...
-        'minVis',    {}, 'maxVis',  {} );
-
-    i = 1;
+    i = 1; rowNum = 0;
     while i <= nRows
         j = i;
-        while j <= nRows && isequaln(satIdx(j), satIdx(i))
-            j = j + 1;
-        end
-        segStart = i;
-        segEnd   = j - 1;
+        while j <= nRows && isequaln(satIdx(j), satIdx(i)), j = j + 1; end
+        segS = i; segE = j - 1; rowNum = rowNum + 1;
 
-        g.active    = handoverTimeline.ActiveSatellite(segStart);
-        g.plane     = handoverTimeline.PlaneNumber(segStart);
-        g.sip       = handoverTimeline.SatelliteInPlane(segStart);
-        g.catalog   = handoverTimeline.CatalogNumber(segStart);
-        g.handler   = handoverTimeline.IsHandler(segStart);
-        g.startTime = timeVec(segStart);
-        g.endTime   = timeVec(segEnd) + seconds(sampleTime);
-        g.durSec    = round(seconds(g.endTime - g.startTime));
+        startTime = timeVec(segS);
+        endTime   = timeVec(segE) + seconds(sampleTime);
+        durSec    = round(seconds(endTime - startTime));
+        segElevs  = elevVec(segS:segE);
 
-        segElevs = elevVec(segStart:segEnd);
-        segVis   = visVec(segStart:segEnd);
-        g.minEl  = round(min(segElevs, [], 'omitnan'), 4);
-        g.maxEl  = round(max(segElevs, [], 'omitnan'), 4);
-        g.minVis = min(segVis);
-        g.maxVis = max(segVis);
+        out_Num{end+1,1}      = rowNum;
+        out_Active{end+1,1}   = char(handoverTimeline.ActiveSatellite(segS));
+        out_Plane{end+1,1}    = handoverTimeline.PlaneNumber(segS);
+        out_SIP{end+1,1}      = handoverTimeline.SatelliteInPlane(segS);
+        out_Catalog{end+1,1}  = handoverTimeline.CatalogNumber(segS);
+        out_Start{end+1,1}    = datestr(startTime, 'HH:MM:SS');
+        out_End{end+1,1}      = datestr(endTime,   'HH:MM:SS');
+        out_Duration{end+1,1} = durSec;
+        out_MaxElev{end+1,1}  = round(max(segElevs, [], 'omitnan'), 4);
+        out_MeanElev{end+1,1} = round(mean(segElevs, 'omitnan'), 4);
 
-        groups(end+1) = g; %#ok<AGROW>
         i = j;
     end
 
-    nGroups = numel(groups);
+    reportTable = table( ...
+        cell2mat(out_Num), out_Active, cell2mat(out_Plane), ...
+        cell2mat(out_SIP), cell2mat(out_Catalog), out_Start, out_End, ...
+        cell2mat(out_Duration), cell2mat(out_MaxElev), ...
+        cell2mat(out_MeanElev), ...
+        'VariableNames', { ...
+            'HandoverNumber', 'ActiveSatellite', 'PlaneNumber', ...
+            'SatelliteInPlane', 'CatalogNumber', 'StartTime', 'EndTime', ...
+            'Duration_sec', 'MaxElevation_deg', 'MeanElevation_deg'});
 
-    % ── Open Excel via COM ────────────────────────────────────────────────
-    Excel = actxserver('Excel.Application');
-    Excel.Visible        = false;
-    Excel.DisplayAlerts  = false;
+    if exist(outFile, 'file'), delete(outFile); end
+    writetable(reportTable, outFile, 'Sheet', 'Handover Summary');
 
-    % Remove any existing file so SaveAs doesn't prompt for overwrite
-    if exist(outFile, 'file')
-        delete(outFile);
-    end
-
-    Workbooks = Excel.Workbooks;
-    WB        = Workbooks.Add();
-    WS        = WB.Worksheets.Item(1);
-    WS.Name   = 'Handover Summary';
-
-    % ── Row 1: title spanning all columns ─────────────────────────────────
-    nCols = 10;  % updated column count after removing IsHandler, StartOrbit, EndOrbit
-    titleText  = sprintf( ...
-        'BEST SATELLITE HANDOVER TABLE  —  Irving, Texas  |  20-Aug-2025  (3-hour window)');
-    colLetter  = char('A' + nCols - 1);
-    titleRange = WS.Range(sprintf('A1:%s1', colLetter));
-    titleRange.Merge();
-    titleRange.Value              = titleText;
-    titleRange.Font.Bold          = true;
-    titleRange.Font.Size          = 12;
-    titleRange.Font.Color         = COL_HDR_FG;
-    titleRange.Interior.Color     = COL_HDR_BG;
-    titleRange.HorizontalAlignment = -4108;   % xlCenter
-    titleRange.VerticalAlignment   = -4108;
-    WS.Rows.Item(1).RowHeight      = 28;
-
-    % ── Row 2: column headers ──────────────────────────────────────────────
-    HEADERS = { '#', 'Active Satellite', 'Plane Number', 'Sat In Plane', ...
-                'Catalog Number', 'Start Time', 'End Time', ...
-                'Duration (sec)', 'Elevation Range (deg)', ...
-                'Visible Sats (min-max)' };
-    nCols = numel(HEADERS);
-
-    for c = 1:nCols
-        cell = WS.Cells.Item(2, c);
-        cell.Value               = HEADERS{c};
-        cell.Font.Bold           = true;
-        cell.Font.Size           = 10;
-        cell.Font.Name           = 'Arial';
-        cell.Font.Color          = COL_HDR_FG;
-        cell.Interior.Color      = COL_HDR_BG;
-        cell.HorizontalAlignment = -4108;
-        cell.VerticalAlignment   = -4108;
-        cell.WrapText            = true;
-        setBorder(cell, COL_HDR_BG);
-    end
-    WS.Rows.Item(2).RowHeight = 36;
-
-    % ── Data rows ─────────────────────────────────────────────────────────
-    for r = 1:nGroups
-        g      = groups(r);
-        exRow  = r + 2;
-        isHand = logical(g.handler);
-
-        % Handler rows get a solid red background; all others cycle through
-        % the alternating fill palette defined at the top of the function
-        if isHand
-            rowBgColor = COL_HANDLER;
-            rowFgColor = COL_HAND_FG;
-        else
-            rowBgColor = ALT_FILLS(mod(r-1, numel(ALT_FILLS)) + 1);
-            rowFgColor = COL_BLACK;
-        end
-
-        % Time-only format (HH:MM:SS) — no date portion
-        startStr = datestr(g.startTime, 'HH:MM:SS');
-        endStr   = datestr(g.endTime,   'HH:MM:SS');
-
-        if isnan(g.minEl)
-            elStr = '—';
-        else
-            elStr = sprintf('%.4f - %.4f', g.minEl, g.maxEl);
-        end
-
-        visStr = sprintf('%d - %d', g.minVis, g.maxVis);
-
-        rowVals = { r, char(g.active), g.plane, g.sip, g.catalog, ...
-                    startStr, endStr, g.durSec, ...
-                    elStr, visStr };
-
-        for c = 1:nCols
-            cell = WS.Cells.Item(exRow, c);
-            cell.Value              = rowVals{c};
-            cell.Font.Name          = 'Arial';
-            cell.Font.Size          = 10;
-            cell.Font.Color         = rowFgColor;
-            cell.Interior.Color     = rowBgColor;
-            cell.VerticalAlignment  = -4108;
-            if c == 2
-                % Satellite name is left-aligned and bold for readability
-                cell.HorizontalAlignment = -4131;
-                cell.Font.Bold = true;
-            else
-                cell.HorizontalAlignment = -4108;
-            end
-            setBorder(cell, rowBgColor);
-        end
-
-        WS.Rows.Item(exRow).RowHeight = 18;
-    end
-
-    % ── Column widths ──────────────────────────────────────────────────────
-    colWidths = [5, 30, 10, 10, 13, 12, 12, 11, 26, 17];
-    for c = 1:nCols
-        WS.Columns.Item(c).ColumnWidth = colWidths(c);
-    end
-
-    % ── Freeze the title and header rows ──────────────────────────────────
-    % Use the workbook's own window rather than the application window to
-    % avoid COM null-window errors when Excel is running hidden.
-    try
-        activeWin = WB.Windows.Item(1);
-        activeWin.SplitRow    = 2;
-        activeWin.FreezePanes = true;
-    catch
-        % Non-critical — skip if the window is not accessible
-    end
-
-    % ── Enable auto-filter on the header row ──────────────────────────────
-    try
-        WS.Cells.Item(2, 1).AutoFilter();
-    catch
-        % Non-critical — skip if auto-filter is unavailable
-    end
-
-    % ── Save and close ─────────────────────────────────────────────────────
-    WB.SaveAs(outFile, 51);   % 51 = xlOpenXMLWorkbook (.xlsx)
-    WB.Close(false);
-    Excel.Quit();
-    Excel.delete();
-
-end   % buildFormattedExcel
-
-% ── Convert R,G,B to the BGR-packed integer that Excel COM expects ─────────
-function v = rgb2xl(r, g, b)
-    v = r + g*256 + b*65536;
-end
-
-% ── Apply a thin grey border to a single cell ─────────────────────────────
-% Each border side is set by name rather than by index number to avoid a
-% "No method Item with matching signature" COM error that some Excel
-% versions throw when a loop integer is passed to Borders.Item().
-function setBorder(cell, ~)
-    bc = rgb2xl(191, 191, 191);
-    borderNames = {'EdgeLeft','EdgeRight','EdgeTop','EdgeBottom'};
-    for k = 1:4
-        try
-            b = cell.Borders.(borderNames{k});
-            b.LineStyle = 1;    % xlContinuous
-            b.Weight    = 2;    % xlThin
-            b.Color     = bc;
-        catch
-            % Skip this border side if the COM property is not available
-        end
-    end
 end
